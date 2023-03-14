@@ -1,11 +1,15 @@
 import logging
+import os
 import azure.functions as func
 from FastAPIApp import app
+
+user_name = os.getenv('gp2-automation-admin-username')
+pw = os.getenv('gp2-automation-admin-password')
 
 @app.get("/sample")
 async def index():
     return {
-    "info": "Try /hello/{name} for parameterized route.",
+    "info": f"Looked up values from Key Vault: username - {user_name}, pw - {pw}",
     } 
 
 @app.get("/hello/{name}")
