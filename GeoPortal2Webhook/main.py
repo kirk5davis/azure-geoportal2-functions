@@ -2,12 +2,13 @@ import logging
 import os
 import azure.functions as func
 # from FastAPIApp import app
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, Body
 from pydantic import BaseModel
 from enum import Enum
 import requests
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
+from typing_extensions import Annotated
 from pydantic import BaseModel, ValidationError, validator
 from arcgis.gis import GIS
 
@@ -62,6 +63,11 @@ class Webhook(BaseModel):
     info: Info
     properties: Dict[str, Any]
 
+class WebhookRegistry(BaseModel):
+    name: str
+
+class WebhookRegistration(BaseModel):
+    WebhookRegistry: WebhookRegistry
 
 class TeamsNotification(BaseModel):
     title: str
@@ -76,14 +82,28 @@ def send_notification(teams_notification: TeamsNotification) -> None:
 def check_for_tags():
     pass
 
-@app.post("/reciever")
-async def test(webhook: Webhook, background_tasks: BackgroundTasks):
 
-    message = {"title": "recieved a webhook again!",
-               "text": json.dumps(webhook.dict())}
-    teams_message = TeamsNotification(**message)
-    # send response
-    background_tasks.add_task(send_notification, teams_notification=teams_message)
+@app.get("/reciever")
+async def test():
+    return {
+        "content": "GET request successful",
+        "response": "accepted",
+    }
+
+@app.post("/reciever")
+async def test(webhook: Annotated[Union[Webhook, None], Body(embed=False)] = None, webhook_registration: Union[WebhookRegistration, None] = None):
+
+    if webhook:
+        message = {"title": "recieved a webhook again!",
+                    "text": json.dumps(webhook.dict())}
+        send_notification(teams_notification=TeamsNotification(**message))
+        print("I got here!")
+        
+    if webhook_registration:
+        message = {"title": "New webhook registered",
+                    "text": json.dumps(webhook_registration.dict())}
+        send_notification(teams_notification=TeamsNotification(**message))
+        
 
     return {
         "response": "accepted",

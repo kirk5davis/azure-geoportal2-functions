@@ -5,5 +5,4 @@
 azure-functions
 fastapi
 requests
-arcgis --no-deps
-geomet
+arcgis
