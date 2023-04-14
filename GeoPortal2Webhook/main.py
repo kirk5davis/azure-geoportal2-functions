@@ -45,11 +45,6 @@ class Event(BaseModel):
     username: str
     when: int
 
-    # @validator('operation')
-    # def check_operation_type_add_update(cls, v):
-    #     if v in ('add', 'update'):
-    #         raise ValueError("webhook operation type must be 'add' or 'update'")
-    #     return v
 
 class Info(BaseModel):
     portalURL: str
@@ -91,18 +86,27 @@ async def test():
     }
 
 @app.post("/reciever")
-async def test(webhook: Annotated[Union[Webhook, None], Body(embed=False)] = None, webhook_registration: Union[WebhookRegistration, None] = None):
+async def test(webhook: Union[Webhook, WebhookRegistration, None] = Body(...)):
 
-    if webhook:
+    if type(webhook) == Webhook:
+        print(type(webhook))
         message = {"title": "recieved a webhook again!",
                     "text": json.dumps(webhook.dict())}
         send_notification(teams_notification=TeamsNotification(**message))
         print("I got here!")
-        
-    if webhook_registration:
-        message = {"title": "New webhook registered",
-                    "text": json.dumps(webhook_registration.dict())}
+    
+    if type(webhook) == WebhookRegistration:
+        print(type(webhook))
+        message = {"title": "recieved a webhook registration!",
+                    "text": json.dumps(webhook.dict())}
         send_notification(teams_notification=TeamsNotification(**message))
+        print("I got here!")
+        
+    # if webhook_registration:
+    #     print(webhook_registration)
+    #     message = {"title": "New webhook registered",
+    #                 "text": json.dumps(webhook_registration.dict())}
+    #     send_notification(teams_notification=TeamsNotification(**message))
         
 
     return {
