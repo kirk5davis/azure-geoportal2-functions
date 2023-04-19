@@ -2,7 +2,7 @@ import logging
 import os
 import azure.functions as func
 # from FastAPIApp import app
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, Depends
 from pydantic import BaseModel
 from enum import Enum
 import requests
@@ -74,7 +74,7 @@ def _connect_to_gis() -> GIS:
 def send_notification(teams_notification: TeamsNotification) -> None:
     requests.post(teams_notification_url, data=json.dumps(teams_notification.dict())) 
 
-def check_for_tags():
+def check_for_tags(gis: Depends(_connect_to_gis)):
     pass
 
 
@@ -90,24 +90,15 @@ async def test(webhook: Union[Webhook, WebhookRegistration, None] = Body(...)):
 
     if type(webhook) == Webhook:
         print(type(webhook))
-        message = {"title": "recieved a webhook again!",
+        message = {"title": f"Webhook Triggered: {webhook.info.webhookName}",
                     "text": json.dumps(webhook.dict())}
         send_notification(teams_notification=TeamsNotification(**message))
-        print("I got here!")
     
     if type(webhook) == WebhookRegistration:
         print(type(webhook))
-        message = {"title": "recieved a webhook registration!",
+        message = {"title": "New Webhook registration recieved.",
                     "text": json.dumps(webhook.dict())}
         send_notification(teams_notification=TeamsNotification(**message))
-        print("I got here!")
-        
-    # if webhook_registration:
-    #     print(webhook_registration)
-    #     message = {"title": "New webhook registered",
-    #                 "text": json.dumps(webhook_registration.dict())}
-    #     send_notification(teams_notification=TeamsNotification(**message))
-        
 
     return {
         "response": "accepted",
