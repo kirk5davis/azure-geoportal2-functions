@@ -10,8 +10,7 @@ import json
 from typing import Any, Dict, List, Union
 from typing_extensions import Annotated
 from pydantic import BaseModel, ValidationError, validator
-from arcgis.gis import GIS
-
+from arcgis.gis import GIS, Item, Group, User
 from .settings import get_settings
 
 settings = get_settings()
@@ -34,6 +33,14 @@ tag_service_guid = os.getenv("Gp2AdminTagResultServiceGUID")
 class OperationTypes(str, Enum):
     ADD = "add"
     UPDATE = "update"
+
+class SharingTargets(str, Enum):
+    GROUP = "group"
+    ORGANIZATION = "organization"
+
+class SharingMechanism(str, Enum):
+    SHARE = "share"
+    UNSHARE = "unshare"
 
 # models
 class Event(BaseModel):
@@ -68,14 +75,88 @@ class TeamsNotification(BaseModel):
     title: str
     text: str
 
+# this model represents select information from Survey123
+class TagShareSpecifics(BaseModel):
+    sharing_mechanism: SharingMechanism
+    sharing_target: SharingTargets
+    group_global_id: str
+
+
+def process_share_tag(tag: str, specs: TagShareSpecifics, item: Item, gis: GIS):
+
+    if specs.sharing_target.ORGANIZATION:
+        
+        if specs.sharing_mechanism.SHARE:
+            if not item.shared_with['org']:
+                item.share(org=True)
+                message = TeamsNotification(title="Successful Org Share!", text=f"Org Share Tag ({tag}) processed for Item: {item.name} - {item.id}")
+                send_notification(message)
+
+        if specs.sharing_mechanism.UNSHARE:
+            if item.shared_with['org']:
+                item.share(org=False)
+                message = TeamsNotification(title="Successful Org Unshare!", text=f"Org Unshare Tag ({tag}) processed for Item: {item.name} - {item.id}")
+                send_notification(message)
+
+
+
+    if specs.sharing_target.GROUP:
+
+        item_shared_with:dict = item.shared_with
+
+        current_groups: list = [i.id for i in item_shared_with["groups"]]
+
+        if specs.sharing_mechanism.SHARE:            
+
+            if not specs.group_global_id in current_groups:
+
+                # verify folks are a part of the group first
+                target_group = Group(gis=gis, groupid=specs.group_global_id)
+                target_group.add_users([item.owner, user_name])
+
+                if not item_shared_with['org']:
+                    item.share(org=True)  # force a quick org share to change the access
+                    item.share(groups=specs.group_global_id, org=False)
+                    message = TeamsNotification(title="Successful Group Share!", text=f"Group Share Tag ({tag}) processed for Item: {item.name} - {item.id} added to Group: {specs.group_global_id}")
+                    send_notification(message)
+                else:
+                    item.share(groups=specs.group_global_id)
+                    message = TeamsNotification(title="Successful Group Share!", text=f"Group Share Tag ({tag}) processed for Item: {item.name} - {item.id} added to Group: {specs.group_global_id}")
+                    send_notification(message)
+                    
+
+        if specs.sharing_mechanism.UNSHARE:
+            if specs.group_global_id in current_groups:
+                item.unshare(groups=specs.group_global_id)
+                message = TeamsNotification(title="Successful Group Unshare!", text=f"Group Unshare Tag ({tag}) processed for Item: {item.name} - {item.id} removed from Group: {specs.group_global_id}")
+                send_notification(message)
+
+
+
+
 def _connect_to_gis() -> GIS:
     return GIS(url=portal_url, user_name=user_name, pw=pw)
 
 def send_notification(teams_notification: TeamsNotification) -> None:
     requests.post(teams_notification_url, data=json.dumps(teams_notification.dict())) 
 
-def check_for_tags(gis: Depends(_connect_to_gis)):
-    pass
+def check_for_admin_tags(webhook: Webhook) -> None:
+    gis: GIS = _connect_to_gis()
+    admin_tags: dict = gis.content.get(tag_service_guid).layers[0].query(as_df=True).set_index("administrative_tag").to_dict(orient="index")
+    for event in webhook.events:
+        src: Item = Item(event.id)
+        src_tags: list = src.tags
+
+        # check for any tag before iterating
+        if any(_ for _ in src_tags if _ in admin_tags):
+            for tag in src_tags:
+                try:
+                    share_specs: dict = admin_tags[tag]
+                    process_share_tag(tag, share_specs, src, gis)
+
+                except KeyError:
+                    pass
+
 
 
 @app.get("/reciever")
@@ -93,6 +174,7 @@ async def test(webhook: Union[Webhook, WebhookRegistration, None] = Body(...)):
         message = {"title": f"Webhook Triggered: {webhook.info.webhookName}",
                     "text": json.dumps(webhook.dict())}
         send_notification(teams_notification=TeamsNotification(**message))
+        check_for_admin_tags(webhook)
     
     if type(webhook) == WebhookRegistration:
         print(type(webhook))
