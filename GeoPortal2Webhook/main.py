@@ -12,6 +12,7 @@ from typing_extensions import Annotated
 from pydantic import BaseModel, ValidationError, validator
 from arcgis.gis import GIS, Item, Group, User
 from .settings import get_settings
+from attrs import define
 
 settings = get_settings()
 
@@ -34,13 +35,22 @@ class OperationTypes(str, Enum):
     ADD = "add"
     UPDATE = "update"
 
+    def __repr__(self):
+        return self.value
+
 class SharingTargets(str, Enum):
     GROUP = "group"
     ORGANIZATION = "organization"
 
+    def __repr__(self):
+        return self.value
+
 class SharingMechanism(str, Enum):
     SHARE = "share"
     UNSHARE = "unshare"
+
+    def __repr__(self):
+        return self.value
 
 # models
 class Event(BaseModel):
@@ -84,15 +94,15 @@ class TagShareSpecifics(BaseModel):
 
 def process_share_tag(tag: str, specs: TagShareSpecifics, item: Item, gis: GIS):
 
-    if specs.sharing_target.ORGANIZATION:
+    if specs.sharing_target == SharingTargets.ORGANIZATION.value:
         
-        if specs.sharing_mechanism.SHARE:
+        if specs.sharing_mechanism == SharingMechanism.SHARE:
             if not item.shared_with['org']:
                 item.share(org=True)
                 message = TeamsNotification(title="Successful Org Share!", text=f"Org Share Tag ({tag}) processed for Item: {item.name} - {item.id}")
                 send_notification(message)
 
-        if specs.sharing_mechanism.UNSHARE:
+        if specs.sharing_mechanism == SharingMechanism.UNSHARE:
             if item.shared_with['org']:
                 item.share(org=False)
                 message = TeamsNotification(title="Successful Org Unshare!", text=f"Org Unshare Tag ({tag}) processed for Item: {item.name} - {item.id}")
@@ -100,13 +110,13 @@ def process_share_tag(tag: str, specs: TagShareSpecifics, item: Item, gis: GIS):
 
 
 
-    if specs.sharing_target.GROUP:
+    if specs.sharing_target == SharingTargets.GROUP:
 
         item_shared_with:dict = item.shared_with
 
         current_groups: list = [i.id for i in item_shared_with["groups"]]
 
-        if specs.sharing_mechanism.SHARE:            
+        if specs.sharing_mechanism == SharingMechanism.SHARE:            
 
             if not specs.group_global_id in current_groups:
 
@@ -125,7 +135,7 @@ def process_share_tag(tag: str, specs: TagShareSpecifics, item: Item, gis: GIS):
                     send_notification(message)
                     
 
-        if specs.sharing_mechanism.UNSHARE:
+        if specs.sharing_mechanism == SharingMechanism.UNSHARE:
             if specs.group_global_id in current_groups:
                 item.unshare(groups=specs.group_global_id)
                 message = TeamsNotification(title="Successful Group Unshare!", text=f"Group Unshare Tag ({tag}) processed for Item: {item.name} - {item.id} removed from Group: {specs.group_global_id}")
@@ -134,26 +144,30 @@ def process_share_tag(tag: str, specs: TagShareSpecifics, item: Item, gis: GIS):
 
 
 
-def _connect_to_gis() -> GIS:
-    return GIS(url=portal_url, user_name=user_name, pw=pw)
+def connect_to_gis() -> GIS:
+    return GIS(url=portal_url, username=user_name, password=pw)
 
 def send_notification(teams_notification: TeamsNotification) -> None:
     requests.post(teams_notification_url, data=json.dumps(teams_notification.dict())) 
 
 def check_for_admin_tags(webhook: Webhook) -> None:
-    gis: GIS = _connect_to_gis()
+    gis: GIS = connect_to_gis()
     admin_tags: dict = gis.content.get(tag_service_guid).layers[0].query(as_df=True).set_index("administrative_tag").to_dict(orient="index")
     for event in webhook.events:
-        src: Item = Item(event.id)
-        src_tags: list = src.tags
-
+        try:
+            src: Item = Item(gis=gis, itemid=event.id)
+        except Exception as e:
+            print(f"Error looking up Item ({event.id}) - {e}")
+            return None
+        
         # check for any tag before iterating
+        src_tags: list = src.tags
         if any(_ for _ in src_tags if _ in admin_tags):
             for tag in src_tags:
                 try:
                     share_specs: dict = admin_tags[tag]
-                    process_share_tag(tag, share_specs, src, gis)
-
+                    share_specs_obj: TagShareSpecifics = TagShareSpecifics(**share_specs)
+                    process_share_tag(tag, share_specs_obj, src, gis)
                 except KeyError:
                     pass
 
@@ -188,7 +202,7 @@ async def test(webhook: Union[Webhook, WebhookRegistration, None] = Body(...)):
 
 @app.get("/test")
 async def test_gis():
-    gis = _connect_to_gis()
+    gis = connect_to_gis()
     return {
         "response": "gis object created",
         "content": f"Portal URL: {gis.url}"
