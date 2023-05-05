@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from enum import Enum
 import requests
 import json
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union, Optional
 from typing_extensions import Annotated
 from pydantic import BaseModel, ValidationError, validator
 from arcgis.gis import GIS, Item, Group, User
@@ -89,7 +89,7 @@ class TeamsNotification(BaseModel):
 class TagShareSpecifics(BaseModel):
     sharing_mechanism: SharingMechanism
     sharing_target: SharingTargets
-    group_global_id: str
+    group_global_id: Optional[str] = None
 
 
 def process_share_tag(tag: str, specs: TagShareSpecifics, item: Item, gis: GIS):
