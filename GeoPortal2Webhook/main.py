@@ -2,7 +2,7 @@ import logging
 import os
 import azure.functions as func
 # from FastAPIApp import app
-from fastapi import FastAPI, Body, Depends
+from fastapi import FastAPI, Body, Depends, BackgroundTasks
 from pydantic import BaseModel
 from enum import Enum
 import requests
@@ -30,6 +30,12 @@ teams_notification_url = os.getenv("Gp2TeamsChannelNotificationURI")
 portal_url = os.getenv("Gp2ApplicationUrl")
 tag_service_guid = os.getenv("Gp2AdminTagResultServiceGUID")
 
+
+def connect_to_gis() -> GIS:
+    return GIS(url=portal_url, username=user_name, password=pw)
+
+# create GIS object
+gis = connect_to_gis()
 
 class OperationTypes(str, Enum):
     ADD = "add"
@@ -94,64 +100,53 @@ class TagShareSpecifics(BaseModel):
 
 def process_share_tag(tag: str, specs: TagShareSpecifics, item: Item, gis: GIS):
 
-    if specs.sharing_target == SharingTargets.ORGANIZATION.value:
-        
+    message = None
+
+    if specs.sharing_target == SharingTargets.ORGANIZATION:
         if specs.sharing_mechanism == SharingMechanism.SHARE:
             if not item.shared_with['org']:
                 item.share(org=True)
                 message = TeamsNotification(title="Successful Org Share!", text=f"Org Share Tag ({tag}) processed for Item: {item.name} - {item.id}")
-                send_notification(message)
 
         if specs.sharing_mechanism == SharingMechanism.UNSHARE:
             if item.shared_with['org']:
                 item.share(org=False)
                 message = TeamsNotification(title="Successful Org Unshare!", text=f"Org Unshare Tag ({tag}) processed for Item: {item.name} - {item.id}")
-                send_notification(message)
-
-
 
     if specs.sharing_target == SharingTargets.GROUP:
-
         item_shared_with:dict = item.shared_with
-
         current_groups: list = [i.id for i in item_shared_with["groups"]]
 
         if specs.sharing_mechanism == SharingMechanism.SHARE:            
-
             if not specs.group_global_id in current_groups:
-
                 # verify folks are a part of the group first
                 target_group = Group(gis=gis, groupid=specs.group_global_id)
                 target_group.add_users([item.owner, user_name])
-
                 if not item_shared_with['org']:
                     item.share(org=True)  # force a quick org share to change the access
                     item.share(groups=specs.group_global_id, org=False)
                     message = TeamsNotification(title="Successful Group Share!", text=f"Group Share Tag ({tag}) processed for Item: {item.name} - {item.id} added to Group: {specs.group_global_id}")
-                    send_notification(message)
                 else:
                     item.share(groups=specs.group_global_id)
                     message = TeamsNotification(title="Successful Group Share!", text=f"Group Share Tag ({tag}) processed for Item: {item.name} - {item.id} added to Group: {specs.group_global_id}")
-                    send_notification(message)
                     
-
         if specs.sharing_mechanism == SharingMechanism.UNSHARE:
             if specs.group_global_id in current_groups:
                 item.unshare(groups=specs.group_global_id)
                 message = TeamsNotification(title="Successful Group Unshare!", text=f"Group Unshare Tag ({tag}) processed for Item: {item.name} - {item.id} removed from Group: {specs.group_global_id}")
-                send_notification(message)
+    
+    if message:
+        send_notification(message)
+    
 
 
 
 
-def connect_to_gis() -> GIS:
-    return GIS(url=portal_url, username=user_name, password=pw)
 
 def send_notification(teams_notification: TeamsNotification) -> None:
     requests.post(teams_notification_url, data=json.dumps(teams_notification.dict())) 
 
 def check_for_admin_tags(webhook: Webhook) -> None:
-    gis: GIS = connect_to_gis()
     admin_tags: dict = gis.content.get(tag_service_guid).layers[0].query(as_df=True).set_index("administrative_tag").to_dict(orient="index")
     for event in webhook.events:
         try:
@@ -181,14 +176,14 @@ async def test():
     }
 
 @app.post("/reciever")
-async def test(webhook: Union[Webhook, WebhookRegistration, None] = Body(...)):
+async def test(background_tasks: BackgroundTasks, webhook: Union[Webhook, WebhookRegistration, None] = Body(...)):
 
     if type(webhook) == Webhook:
         print(type(webhook))
         message = {"title": f"Webhook Triggered: {webhook.info.webhookName}",
                     "text": json.dumps(webhook.dict())}
         send_notification(teams_notification=TeamsNotification(**message))
-        check_for_admin_tags(webhook)
+        background_tasks.add_task(check_for_admin_tags, webhook=webhook)
     
     if type(webhook) == WebhookRegistration:
         print(type(webhook))
