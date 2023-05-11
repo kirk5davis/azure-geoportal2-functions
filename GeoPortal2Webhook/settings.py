@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     
     # Feature Service GUID that holds results of the Tag Management Survey123 form
     TAG_MGMT_SERVICE_GUID = os.getenv("Gp2AdminTagResultServiceGUID")
+
+    # Accepted Email Subdomains
+    # ACCEPTED_GOVERNMENT_USER_DOMAINS = [".wa.gov"]
     
 
 def get_settings() -> Settings:

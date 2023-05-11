@@ -34,6 +34,22 @@ tag_service_guid = os.getenv("Gp2AdminTagResultServiceGUID")
 def connect_to_gis() -> GIS:
     return GIS(url=portal_url, username=user_name, password=pw)
 
+
+def _check_for_agency_group_access(gis_obj, input_email_domain):
+    """returns a group to which a new user should be added based on an input email domain.
+        Example: 'watech.wa.gov', agency domain returned would be 'watech'.
+        A group with the tag 'agency-group' and 'watech' would need to exist for this funtion
+        to return anything."""
+    for sub_string in settings.ACCEPTED_GOVERNMENT_USER_DOMAIN_SUBSTRINGS:
+        input_email_domain = input_email_domain.replace(sub_string, "")
+    agency_domain = input_email_domain
+    possible_agency_groups = gis_obj.groups.search("agency_group")
+    for group in possible_agency_groups:
+        if agency_domain in group.tags:
+            return group
+    return None
+
+
 # create GIS object
 gis = connect_to_gis()
 
@@ -167,6 +183,9 @@ def check_for_admin_tags(webhook: Webhook) -> None:
                     pass
 
 
+def new_user_email_check(webhook:Webhook) -> None:
+    pass
+
 
 @app.get("/reciever")
 async def test():
@@ -184,6 +203,26 @@ async def test(background_tasks: BackgroundTasks, webhook: Union[Webhook, Webhoo
                     "text": json.dumps(webhook.dict())}
         send_notification(teams_notification=TeamsNotification(**message))
         background_tasks.add_task(check_for_admin_tags, webhook=webhook)
+    
+    if type(webhook) == WebhookRegistration:
+        print(type(webhook))
+        message = {"title": "New Webhook registration recieved.",
+                    "text": json.dumps(webhook.dict())}
+        send_notification(teams_notification=TeamsNotification(**message))
+
+    return {
+        "response": "accepted",
+    }
+
+@app.post("/new_user")
+async def test(background_tasks: BackgroundTasks, webhook: Union[Webhook, WebhookRegistration, None] = Body(...)):
+
+    if type(webhook) == Webhook:
+        print(type(webhook))
+        message = {"title": f"Webhook Triggered: {webhook.info.webhookName}",
+                    "text": json.dumps(webhook.dict())}
+        send_notification(teams_notification=TeamsNotification(**message))
+        background_tasks.add_task(new_user_email_check, webhook=webhook)
     
     if type(webhook) == WebhookRegistration:
         print(type(webhook))
